@@ -1,65 +1,55 @@
-Sub MergeSameCells()
 
-    Dim ws As Worksheet
-    Dim lastRow As Long
-    Dim startRow As Long
-    Dim i As Long
-
-    Set ws = ActiveSheet
-
-    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
-    startRow = 2   'Assuming row 1 is header
-
-    For i = 3 To lastRow + 1
-
-        If ws.Cells(i, 1).Value <> ws.Cells(startRow, 1).Value Then
-
-            If i - startRow > 1 Then
-                With ws.Range(ws.Cells(startRow, 1), ws.Cells(i - 1, 1))
-                    .Merge
-                    .HorizontalAlignment = xlCenter
-                    .VerticalAlignment = xlCenter
-                End With
-            End If
-
-            startRow = i
-
-        End If
-
-    Next i
-
-End Sub
 # Docker-Files
 This Repo contains Docker files
-Sub MergeSameRequirements()
+import re
+from docx import Document
 
-    Dim ws As Worksheet
-    Dim lastRow As Long
-    Dim startRow As Long
-    Dim i As Long
 
-    Set ws = ActiveSheet
-    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+REQUIREMENT_PATTERN = re.compile(r"\bACDE-TOR-\d+\b", re.IGNORECASE)
 
-    startRow = 2   'Assumes row 1 is the header
 
-    For i = 3 To lastRow + 1
+def extract_requirement_ids(file_path):
+    document = Document(file_path)
 
-        If ws.Cells(i, 1).Value <> ws.Cells(startRow, 1).Value Then
+    requirement_ids = set()
 
-            If i - startRow > 1 Then
-                With ws.Range(ws.Cells(startRow, 1), ws.Cells(i - 1, 1))
-                    .Merge
-                    .HorizontalAlignment = xlCenter
-                    .VerticalAlignment = xlCenter
-                End With
-            End If
+    for table in document.tables:
 
-            startRow = i
+        # Find the "ID / TYPE" column
+        header_row = table.rows[0]
 
-        End If
+        id_column_index = None
 
-    Next i
+        for index, cell in enumerate(header_row.cells):
+            header = cell.text.strip().upper()
 
-End Sub
+            if header == "ID / TYPE":
+                id_column_index = index
+                break
+
+        # Skip this table if it doesn't have an ID / TYPE column
+        if id_column_index is None:
+            continue
+
+        # Read values from the ID / TYPE column
+        for row in table.rows[1:]:
+            cell_text = row.cells[id_column_index].text.strip()
+
+            matches = REQUIREMENT_PATTERN.findall(cell_text)
+
+            for requirement_id in matches:
+                requirement_ids.add(requirement_id.upper())
+
+    return sorted(requirement_ids)
+
+
+if __name__ == "__main__":
+    file_path = "requirements.docx"
+
+    requirement_ids = extract_requirement_ids(file_path)
+
+    print(f"Found {len(requirement_ids)} requirement IDs:")
+
+    for requirement_id in requirement_ids:
+        print(requirement_id)
 
