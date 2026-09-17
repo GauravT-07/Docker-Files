@@ -4,7 +4,7 @@ from openpyxl import Workbook, load_workbook
 
 
 # ============================================================
-# CONFIGURATION
+# FILE CONFIGURATION
 # ============================================================
 
 WORD_FILE = "requirements.docx"
@@ -20,30 +20,35 @@ TEXT_REPORT = "tor_comparison.txt"
 # ============================================================
 
 TOR_PATTERN = re.compile(
-    r"\bACDE-TOR-\d+\b",
+    r"^ACDE-TOR-\d+$",
     re.IGNORECASE
 )
 
 
 # ============================================================
-# HEADER NORMALIZATION
+# NORMALIZE TOR ID
 # ============================================================
 
-def normalize_header(text):
+def normalize_tor_id(value):
     """
-    Converts variations such as:
+    Convert the value into a standard TOR ID.
 
-        ID / TYPE
-        ID/TYPE
-        ID /TYPE
-        ID/ TYPE
+    Example:
+        acde-tor-123  -> ACDE-TOR-123
+        ACDE-TOR-123  -> ACDE-TOR-123
 
-    into:
-
-        ID/TYPE
+    Returns None if the value is not a valid TOR ID.
     """
 
-    return re.sub(r"\s+", "", str(text)).upper()
+    if value is None:
+        return None
+
+    tor_id = str(value).strip().upper()
+
+    if TOR_PATTERN.fullmatch(tor_id):
+        return tor_id
+
+    return None
 
 
 # ============================================================
@@ -64,23 +69,26 @@ def extract_tor_ids_from_word(file_path):
         id_column_index = None
 
         # ----------------------------------------------------
-        # Find the "ID / TYPE" column
+        # Find ID / TYPE column
         # ----------------------------------------------------
 
         for row_number, row in enumerate(table.rows):
 
             for column_number, cell in enumerate(row.cells):
 
-                cell_text = cell.text.strip()
+                header = re.sub(
+                    r"\s+",
+                    "",
+                    cell.text
+                ).upper()
 
-                if normalize_header(cell_text) == "ID/TYPE":
+                if header == "ID/TYPE":
 
                     id_column_index = column_number
 
                     print(
-                        f"Found ID / TYPE column in "
+                        f"Found ID / TYPE column: "
                         f"Table {table_number}, "
-                        f"Row {row_number + 1}, "
                         f"Column {column_number + 1}"
                     )
 
@@ -97,7 +105,7 @@ def extract_tor_ids_from_word(file_path):
             continue
 
         # ----------------------------------------------------
-        # Read TOR IDs from the identified column
+        # Read TOR IDs from ID / TYPE column
         # ----------------------------------------------------
 
         for row in table.rows:
@@ -109,14 +117,17 @@ def extract_tor_ids_from_word(file_path):
                 id_column_index
             ].text.strip()
 
-            matches = TOR_PATTERN.findall(
-                cell_text
+            # Find ACDE-TOR-123 anywhere in the cell
+            matches = re.findall(
+                r"\bACDE-TOR-\d+\b",
+                cell_text,
+                re.IGNORECASE
             )
 
-            for tor_id in matches:
+            for match in matches:
 
                 tor_ids.add(
-                    tor_id.upper()
+                    match.upper()
                 )
 
     return tor_ids
@@ -126,7 +137,7 @@ def extract_tor_ids_from_word(file_path):
 # READ TOR IDs FROM EXISTING EXCEL
 # ============================================================
 
-def read_tor_ids_from_excel(file_path):
+def read_tor_ids_from_existing_excel(file_path):
 
     workbook = load_workbook(
         file_path,
@@ -138,7 +149,10 @@ def read_tor_ids_from_excel(file_path):
 
     for worksheet in workbook.worksheets:
 
-        # TOR ID is in the FIRST COLUMN
+        # ----------------------------------------------------
+        # ONLY READ COLUMN A
+        # ----------------------------------------------------
+
         for row in worksheet.iter_rows(
             min_col=1,
             max_col=1
@@ -146,20 +160,10 @@ def read_tor_ids_from_excel(file_path):
 
             value = row[0].value
 
-            if value is None:
-                continue
+            tor_id = normalize_tor_id(value)
 
-            value = str(value).strip()
-
-            matches = TOR_PATTERN.findall(
-                value
-            )
-
-            for tor_id in matches:
-
-                tor_ids.add(
-                    tor_id.upper()
-                )
+            if tor_id is not None:
+                tor_ids.add(tor_id)
 
     workbook.close()
 
@@ -167,7 +171,7 @@ def read_tor_ids_from_excel(file_path):
 
 
 # ============================================================
-# CREATE EXCEL WITH EXTRACTED TOR IDs
+# CREATE EXTRACTED TOR EXCEL
 # ============================================================
 
 def create_extracted_excel(
@@ -200,7 +204,7 @@ def create_extracted_excel(
 
 def create_comparison_excel(
     existing_ids,
-    current_ids,
+    extracted_ids,
     output_file
 ):
 
@@ -215,26 +219,26 @@ def create_comparison_excel(
         "Status"
     ])
 
-    # Combine IDs from both files
+    # Combine all unique TOR IDs
     all_tor_ids = sorted(
-        existing_ids | current_ids
+        existing_ids | extracted_ids
     )
 
     for tor_id in all_tor_ids:
 
         # -----------------------------------------------
-        # Present in BOTH
+        # Present in both
         # -----------------------------------------------
 
         if (
             tor_id in existing_ids
-            and tor_id in current_ids
+            and tor_id in extracted_ids
         ):
 
             status = "Present in both"
 
         # -----------------------------------------------
-        # Existing Excel ONLY
+        # Existing Excel only
         # -----------------------------------------------
 
         elif tor_id in existing_ids:
@@ -245,7 +249,7 @@ def create_comparison_excel(
             )
 
         # -----------------------------------------------
-        # Current/Extracted Excel ONLY
+        # Extracted Excel only
         # -----------------------------------------------
 
         else:
@@ -266,23 +270,18 @@ def create_comparison_excel(
 
 def create_text_report(
     existing_ids,
-    current_ids,
+    extracted_ids,
     output_file
 ):
 
-    # Existing Excel but NOT current/extracted Excel
-    deleted_requirements = sorted(
-        existing_ids - current_ids
+    # Existing Excel but NOT extracted/current
+    delete_requirements = sorted(
+        existing_ids - extracted_ids
     )
 
-    # Current/extracted Excel but NOT existing Excel
+    # Extracted/current but NOT existing Excel
     missing_requirements = sorted(
-        current_ids - existing_ids
-    )
-
-    # Present in both
-    common_requirements = sorted(
-        existing_ids & current_ids
+        extracted_ids - existing_ids
     )
 
     with open(
@@ -300,39 +299,36 @@ def create_text_report(
         )
 
         # ------------------------------------------------
-        # Existing only
+        # Existing Excel only
         # ------------------------------------------------
 
         file.write(
-            "1. REQUIREMENT AND TEST CASE NEEDS TO BE DELETED\n"
+            "REQUIREMENT AND TEST CASE NEEDS TO BE DELETED\n"
         )
 
         file.write(
             "-" * 60 + "\n"
         )
 
-        if deleted_requirements:
+        if delete_requirements:
 
-            for tor_id in deleted_requirements:
-
+            for tor_id in delete_requirements:
                 file.write(
                     f"{tor_id}\n"
                 )
 
         else:
 
-            file.write(
-                "None\n"
-            )
+            file.write("None\n")
 
-        file.write("\n")
+        file.write("\n\n")
 
         # ------------------------------------------------
-        # Current only
+        # Extracted Excel only
         # ------------------------------------------------
 
         file.write(
-            "2. REQUIREMENT IS MISSING\n"
+            "REQUIREMENT IS MISSING\n"
         )
 
         file.write(
@@ -342,44 +338,13 @@ def create_text_report(
         if missing_requirements:
 
             for tor_id in missing_requirements:
-
                 file.write(
                     f"{tor_id}\n"
                 )
 
         else:
 
-            file.write(
-                "None\n"
-            )
-
-        file.write("\n")
-
-        # ------------------------------------------------
-        # Common
-        # ------------------------------------------------
-
-        file.write(
-            "3. PRESENT IN BOTH\n"
-        )
-
-        file.write(
-            "-" * 60 + "\n"
-        )
-
-        if common_requirements:
-
-            for tor_id in common_requirements:
-
-                file.write(
-                    f"{tor_id}\n"
-                )
-
-        else:
-
-            file.write(
-                "None\n"
-            )
+            file.write("None\n")
 
 
 # ============================================================
@@ -398,21 +363,20 @@ if __name__ == "__main__":
 
     print("\nReading Word document...")
 
-    current_ids = extract_tor_ids_from_word(
+    extracted_ids = extract_tor_ids_from_word(
         WORD_FILE
     )
 
     print(
-        f"Found {len(current_ids)} unique TOR IDs "
-        f"in Word document."
+        f"Extracted {len(extracted_ids)} unique TOR IDs."
     )
 
     # --------------------------------------------------------
-    # 2. Create extracted TOR Excel
+    # 2. Create Excel containing extracted TOR IDs
     # --------------------------------------------------------
 
     create_extracted_excel(
-        current_ids,
+        extracted_ids,
         EXTRACTED_EXCEL
     )
 
@@ -421,12 +385,12 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------------
-    # 3. Read TOR IDs from existing Excel
+    # 3. Read existing Excel - ONLY COLUMN A
     # --------------------------------------------------------
 
-    print("\nReading existing Excel...")
+    print("\nReading existing Excel Column A...")
 
-    existing_ids = read_tor_ids_from_excel(
+    existing_ids = read_tor_ids_from_existing_excel(
         EXISTING_EXCEL
     )
 
@@ -436,12 +400,12 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------------
-    # 4. Compare both files
+    # 4. Compare
     # --------------------------------------------------------
 
     create_comparison_excel(
         existing_ids,
-        current_ids,
+        extracted_ids,
         COMPARISON_EXCEL
     )
 
@@ -455,7 +419,7 @@ if __name__ == "__main__":
 
     create_text_report(
         existing_ids,
-        current_ids,
+        extracted_ids,
         TEXT_REPORT
     )
 
@@ -464,19 +428,19 @@ if __name__ == "__main__":
     )
 
     # --------------------------------------------------------
-    # 6. Print summary
+    # 6. Summary
     # --------------------------------------------------------
 
-    common_count = len(
-        existing_ids & current_ids
+    present_in_both = (
+        existing_ids & extracted_ids
     )
 
-    deleted_count = len(
-        existing_ids - current_ids
+    delete_requirements = (
+        existing_ids - extracted_ids
     )
 
-    missing_count = len(
-        current_ids - existing_ids
+    missing_requirements = (
+        extracted_ids - existing_ids
     )
 
     print("\n" + "=" * 60)
@@ -484,19 +448,20 @@ if __name__ == "__main__":
     print("=" * 60)
 
     print(
-        f"Present in both: {common_count}"
+        f"Present in both: "
+        f"{len(present_in_both)}"
     )
 
     print(
-        "Existing Excel only "
-        "(Requirement and test case needs to be deleted): "
-        f"{deleted_count}"
+        f"Existing Excel only "
+        f"(delete): "
+        f"{len(delete_requirements)}"
     )
 
     print(
-        "Current/Extracted Excel only "
-        "(Requirement is missing): "
-        f"{missing_count}"
+        f"Extracted Excel only "
+        f"(missing): "
+        f"{len(missing_requirements)}"
     )
 
     print("=" * 60)
